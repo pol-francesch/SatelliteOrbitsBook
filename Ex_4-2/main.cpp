@@ -4,7 +4,7 @@
 #include <limits>
 
 #include "SAT_VecMat.h"
-#include "integration.hpp"
+#include "gaussJackson.hpp"
 
 using std::cout;
 using std::endl;
@@ -14,11 +14,15 @@ double frac(double x) { return x - floor(x); }
 double modulo(double x, double y) { return y * frac(x/y); }
 
 //Function prototypes
+void f_Kep3d(double t, const Vector& r, const Vector& v, Vector& a, void* pAux);
 double eccAnom(double M, double ecc);
 Vector state(double GM, const Vector& Kep, double dt=0.0);
-void f_Kep3d(double t, const Vector& y, Vector& yp, void* pAux);
 
-//Main
+//Class prototypes
+
+/**
+ * Main function. 4th order Gauss-Jackson model
+*/
 int main() {
     //Define constants
     const double GM {1.0};                              //Gravitational coefficient
@@ -27,41 +31,58 @@ int main() {
     const Vector kep(1.0, ecc, 0.0, 0.0, 0.0, 0.0);     //Vector containing Keplerian elements (a,e,i,Omega,omega,M)
     const Vector y_ref {state(GM, kep, t_end)};         //Reference solution
 
-    const int steps[] = {50, 100, 250, 500, 750, 1000, 1500, 2000};
+    const int steps[] = {100, 300, 600, 1000, 1500, 2000, 3000, 4000};
 
     //Define variables
     int nCalls;                                         //Function call count
     int iCase;
     double t,h;                                         //Time and step size
-    Vector y(6);
+    Vector y(6);                                        //State vector
+    Vector r(3);
+    Vector v(3);
 
-    RK4 orbit(f_Kep3d, 6, &nCalls);
+    GJ4P orbit(f_Kep3d, 3, &nCalls);
 
     //Header
-    cout << " Problem D1 (ecc = 0.1)" << endl << endl;
+    cout << "  Problem D1 (e=0.1)" << endl << endl;
     cout << "  N_fnc   Accuracy   Digits " << endl;
 
     //Loop over test cases
     for(iCase = 0; iCase < 8; iCase++) {
-        //Step size calculation
+        //Step size
         h = t_end/steps[iCase];
 
         //Initial values
         t = 0.0;
-        y = Vector(1.0 - ecc, 0.0, 0.0,     0.0, sqrt((1 + ecc)/(1 - ecc)), 0.0);
+        r = Vector(1.0-ecc, 0.0, 0.0);
+        v = Vector(0.0, sqrt((1+ecc)/(1-ecc)), 0.0);
         nCalls = 0;
 
-        //Integrate from t=t to t=t_end
-        for(int i {1}; i < steps[iCase]; i++)
-            orbit.step(t, y, h);
-        
+        //Integration from t=t to t=t_end
+        orbit.init(t, r, v, h);
+        for(int i {1}; i <= steps[iCase]; i++)
+            orbit.step(t, r, v);
+        y = Stack(r,v);
+
         //Output
         cout << std::fixed << std::setw(6) << nCalls
              << std::scientific << std::setprecision(3) << std::setw(13) << Norm(y - y_ref)
-             << std::fixed << std::setprecision(2) << std::setw(7) << -log10(Norm(y - y_ref)) << endl;
+             << std::fixed << std::setprecision(2) << std::setw(7) << -log10(Norm(y-y_ref)) << endl;
     }
+}
 
-    return 0;
+/**
+ * Computes 2nd time derivative of position vector for normalized Kepler's problem
+*/
+void f_Kep3d(double t, const Vector& r, const Vector& v, Vector& a, void* pAux) {
+    //Pointer to pAux expected to be used as function call counter
+    int* pCalls = static_cast<int*>(pAux);
+
+    //Second order derivatives
+    a = -r/(pow(Norm(r), 3));
+
+    //Increment function call count
+    (*pCalls)++; 
 }
 
 /**
@@ -153,20 +174,4 @@ Vector state(double GM, const Vector& Kep, double dt) {
 
     //State vector
     return Stack(r,v);
-}
-
-/**
- * Computes derivative of state vector for normalized Kepler's problem in 3D
-*/
-void f_Kep3d(double t, const Vector& y, Vector& yp, void* pAux) {
-    //Pointer to pAux expected to be used as function call counter
-    int* pCalls = static_cast<int*>(pAux);
-
-    //State vector derivatives
-    Vector r = y.slice(0,2);
-    Vector v = y.slice(3,5);
-    yp = Stack(v, -r/(pow(Norm(r),3)));
-
-    //Increment function call count
-    (*pCalls)++;
 }
